@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw
 
+#used AI to find better way to calculate kart closest to center of image, and cleaner calc for counting questins
+
 # Define object type mapping
 OBJECT_TYPES = {
     1: "Kart",
@@ -52,7 +54,7 @@ def extract_frame_info(image_path: str) -> tuple[int, int]:
 
 
 def draw_detections(
-    image_path: str, info_path: str, font_scale: float = 0.5, thickness: int = 1, min_box_size: int = 5
+        image_path: str, info_path: str, font_scale: float = 0.5, thickness: int = 1, min_box_size: int = 5
 ) -> np.ndarray:
     """
     Draw detection bounding boxes and labels on the image.
@@ -132,7 +134,7 @@ def draw_detections(
 
 
 def extract_kart_objects(
-    info_path: str, view_index: int, img_width: int = 150, img_height: int = 100, min_box_size: int = 5
+        info_path: str, view_index: int, img_width: int = 150, img_height: int = 100, min_box_size: int = 5
 ) -> list:
     """
     Extract kart objects from the info.json file, including their center points and identify the center kart.
@@ -151,8 +153,51 @@ def extract_kart_objects(
         - center: (x, y) coordinates of the kart's center
         - is_center_kart: Boolean indicating if this is the kart closest to image center
     """
+    # Calculate scaling factors
+    scale_x = img_width / ORIGINAL_WIDTH
+    scale_y = img_height / ORIGINAL_HEIGHT
+    # Read the info.json file
+    with open(info_path) as f:
+        info = json.load(f)
+    detections = info.get("detections", [])[view_index]
+    karts = info.get("karts")
+    kart_list = []
+    #calculate image center
+    img_center = (img_width/2,img_height/2)
 
-    raise NotImplementedError("Not implemented")
+    #iterate over karts, checking bounding boxes, building kart objects
+    for bbox in detections:
+        obj, track_id, x1, y1, x2, y2 = bbox
+        # Scale coordinates to fit the current image size
+        x1_scaled = (x1 * scale_x)
+        y1_scaled = (y1 * scale_y)
+        x2_scaled = (x2 * scale_x)
+        y2_scaled = (y2 * scale_y)
+        if obj != 1 or (x2_scaled-x1_scaled) < min_box_size or (y2_scaled-y1_scaled) < min_box_size:
+            continue #skip bounding boxes that are too small or not a kart
+        #filter out karts outside image boundaries
+        center_x = (x1_scaled + x2_scaled) /2
+        center_y = (y1_scaled + y2_scaled) / 2
+        if not(0 <= center_x <= img_width and 0 <= center_y <= img_height):
+            continue
+
+        kart_obj = {
+            "instance_id": track_id,
+            "kart_name" : karts[track_id],
+            "center" : (center_x, center_y),
+            "is_center_kart" : False
+        }
+        kart_list.append(kart_obj)
+
+    #find center kart
+    if kart_list:
+        def dist_to_center(kart):
+            cx, cy = kart["center"]
+            return (cx - img_center[0]) ** 2 + (cy - img_center[1]) ** 2
+        closet_kart = min(kart_list, key=dist_to_center)
+        closet_kart["is_center_kart"] = True
+
+    return kart_list
 
 
 def extract_track_info(info_path: str) -> str:
@@ -165,8 +210,11 @@ def extract_track_info(info_path: str) -> str:
     Returns:
         Track name as a string
     """
+    # Read the info.json file
+    with open(info_path) as f:
+        info = json.load(f)
 
-    raise NotImplementedError("Not implemented")
+    return str(info.get("track"))
 
 
 def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
@@ -182,27 +230,93 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
     Returns:
         List of dictionaries, each containing a question and answer
     """
-    # 1. Ego car question
-    # What kart is the ego car?
+    # Rebuild image file name
+    # taken from check_qa_pairs method
+    info_pth = Path(info_path)
+    base_name = info_pth.stem.replace("_info", "")
+    image_file = f"{base_name}_{view_index:02d}_im.jpg"
 
+    qa_pairs = []
+    karts_info = extract_kart_objects(info_path,view_index,img_width,img_height)
+    if not karts_info:
+        return qa_pairs #empty if no karts in image
+
+    track = extract_track_info(info_path)
+    #find center kart
+    ego_kart = next((kart for kart in karts_info if kart["is_center_kart"]), None)
+    # 1. Ego car question
+    # What kart is the ego car? Do I need to protect for no ego kart? I don't think so
+    ego_x, ego_y = ego_kart["center"]
+    qa_pairs.append({
+        "question" : "What kart is the ego car?",
+        "answer" : ego_kart["kart_name"],
+        "image_file" : image_file
+    })
     # 2. Total karts question
     # How many karts are there in the scenario?
-
+    qa_pairs.append({
+        "question" : "How many karts are there in the scenario?",
+        "answer" : len(karts_info),
+        "image_file" : image_file
+    })
     # 3. Track information questions
     # What track is this?
-
+    qa_pairs.append({
+        "question" : "What track is this?",
+        "answer" : track,
+        "image_file" : image_file
+    })
     # 4. Relative position questions for each kart
     # Is {kart_name} to the left or right of the ego car?
     # Is {kart_name} in front of or behind the ego car?
-
+    for kart in karts_info:
+        if kart == ego_kart:
+            continue
+        kart_x, kart_y = kart["center"]
+        #check left or right
+        l_or_r = "left" if kart_x < ego_x else "right"
+        qa_pairs.append({
+            "question": f"Is {kart['kart_name']} to the left or right of the ego car?",
+            "answer": l_or_r,
+            "image_file": image_file
+        })
+        #check front/back
+        fr_or_bk = "front" if kart_y < ego_y else "behind"
+        qa_pairs.append({
+            "question" : f"Is {kart['kart_name']} in front of or behind the ego car?",
+            "answer" : fr_or_bk,
+            "image_file" : image_file
+        })
     # 5. Counting questions
     # How many karts are to the left of the ego car?
     # How many karts are to the right of the ego car?
     # How many karts are in front of the ego car?
     # How many karts are behind the ego car?
-
-    raise NotImplementedError("Not implemented")
-
+    left_count = sum(1 for kart in karts_info if kart["center"][0] < ego_x and kart != ego_kart)
+    right_count = sum(1 for kart in karts_info if kart["center"][0] > ego_x and kart != ego_kart)
+    front_count = sum(1 for kart in karts_info if kart["center"][1] < ego_y and kart != ego_kart)
+    behind_count = sum(1 for kart in karts_info if kart["center"][1] > ego_y and kart != ego_kart)
+    qa_pairs.append({
+        "question" : "How many karts are to the left of the ego car?",
+        "answer" : left_count,
+        "image_file": image_file
+    })
+    qa_pairs.append({
+        "question": "How many karts are to the right of the ego car?",
+        "answer": right_count,
+        "image_file": image_file
+    })
+    qa_pairs.append({
+        "question": "How many karts are in front of the ego car?",
+        "answer": front_count,
+        "image_file": image_file
+    })
+    qa_pairs.append({
+        "question": "How many karts are behind the ego car?",
+        "answer": behind_count,
+        "image_file": image_file
+    })
+    return qa_pairs
 
 def check_qa_pairs(info_file: str, view_index: int):
     """
@@ -221,6 +335,7 @@ def check_qa_pairs(info_file: str, view_index: int):
     annotated_image = draw_detections(str(image_file), info_file)
 
     # Display the image
+    plt.switch_backend('TkAgg') #trying to get the image to show
     plt.figure(figsize=(12, 8))
     plt.imshow(annotated_image)
     plt.axis("off")
@@ -248,7 +363,7 @@ You probably need to add additional commands to Fire below.
 
 
 def main():
-    fire.Fire({"check": check_qa_pairs})
+    fire.Fire({"check": check_qa_pairs, "generate": generate_qa_pairs, "draw": draw_detections})
 
 
 if __name__ == "__main__":
