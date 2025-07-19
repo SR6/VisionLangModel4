@@ -1,4 +1,5 @@
 import json
+import os.path
 from pathlib import Path
 
 import fire
@@ -169,14 +170,14 @@ def extract_kart_objects(
     for bbox in detections:
         obj, track_id, x1, y1, x2, y2 = bbox
         # Scale coordinates to fit the current image size
-        x1_scaled = (x1 * scale_x)
-        y1_scaled = (y1 * scale_y)
-        x2_scaled = (x2 * scale_x)
-        y2_scaled = (y2 * scale_y)
+        x1_scaled = int(x1 * scale_x)
+        y1_scaled = int(y1 * scale_y)
+        x2_scaled = int(x2 * scale_x)
+        y2_scaled = int(y2 * scale_y)
         if obj != 1 or (x2_scaled-x1_scaled) < min_box_size or (y2_scaled-y1_scaled) < min_box_size:
             continue #skip bounding boxes that are too small or not a kart
         #filter out karts outside image boundaries
-        center_x = (x1_scaled + x2_scaled) /2
+        center_x = (x1_scaled + x2_scaled) / 2
         center_y = (y1_scaled + y2_scaled) / 2
         if not(0 <= center_x <= img_width and 0 <= center_y <= img_height):
             continue
@@ -235,6 +236,8 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
     info_pth = Path(info_path)
     base_name = info_pth.stem.replace("_info", "")
     image_file = f"{base_name}_{view_index:02d}_im.jpg"
+    relative_dir = info_pth.parent.relative_to("data")
+    image_file = str(os.path.join(relative_dir,image_file))
 
     qa_pairs = []
     karts_info = extract_kart_objects(info_path,view_index,img_width,img_height)
@@ -256,7 +259,7 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
     # How many karts are there in the scenario?
     qa_pairs.append({
         "question" : "How many karts are there in the scenario?",
-        "answer" : len(karts_info),
+        "answer" : str(len(karts_info)),
         "image_file" : image_file
     })
     # 3. Track information questions
@@ -274,17 +277,23 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
             continue
         kart_x, kart_y = kart["center"]
         #check left or right
-        l_or_r = "left" if kart_x < ego_x else "right"
+        l_or_r = "left" if kart_x <= ego_x else "right"
         qa_pairs.append({
             "question": f"Is {kart['kart_name']} to the left or right of the ego car?",
             "answer": l_or_r,
             "image_file": image_file
         })
         #check front/back
-        fr_or_bk = "front" if kart_y < ego_y else "behind"
+        fr_or_bk = "front" if kart_y < ego_y else "back"
         qa_pairs.append({
             "question" : f"Is {kart['kart_name']} in front of or behind the ego car?",
             "answer" : fr_or_bk,
+            "image_file" : image_file
+        })
+        #missing questions: where is kart relative to ego car
+        qa_pairs.append({
+            "question" : f"Where is {kart['kart_name']} relative to the ego car?",
+            "answer" : f'{fr_or_bk} and {l_or_r}',
             "image_file" : image_file
         })
     # 5. Counting questions
@@ -298,25 +307,55 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
     behind_count = sum(1 for kart in karts_info if kart["center"][1] > ego_y and kart != ego_kart)
     qa_pairs.append({
         "question" : "How many karts are to the left of the ego car?",
-        "answer" : left_count,
+        "answer" : str(left_count),
         "image_file": image_file
     })
     qa_pairs.append({
         "question": "How many karts are to the right of the ego car?",
-        "answer": right_count,
+        "answer": str(right_count),
         "image_file": image_file
     })
     qa_pairs.append({
         "question": "How many karts are in front of the ego car?",
-        "answer": front_count,
+        "answer": str(front_count),
         "image_file": image_file
     })
     qa_pairs.append({
         "question": "How many karts are behind the ego car?",
-        "answer": behind_count,
+        "answer": str(behind_count),
         "image_file": image_file
     })
     return qa_pairs
+
+def generate_all(info_path:str,output_json:str, img_width: int=150,img_height: int=100):
+    """
+    Generate json output file for all data
+    Args:
+        info_path: Path to the info.json files (directory only)
+        output_json: Filename for the output json file
+        img_width: image width for scaling
+        img_height: image height for scaling
+
+    Returns:
+        creates a json file of qa pairs
+    """
+    import glob
+    import os
+    all_qa_pairs = []
+    #count = 0
+    for filepath in glob.glob(os.path.join(info_path, '*info.json')):
+        #filepath is a single json file in directory provided
+        #count += 1 #temp to restrict running the entire thing
+        #if count > 10:
+        #    break
+        for view in range(10):
+            qa_pair = generate_qa_pairs(filepath,view)
+            if qa_pair:
+                all_qa_pairs.extend(qa_pair)
+
+    # save to json file
+    with open(output_json, "w") as f:
+        json.dump(all_qa_pairs, f, indent=2)
 
 def check_qa_pairs(info_file: str, view_index: int):
     """
@@ -363,7 +402,7 @@ You probably need to add additional commands to Fire below.
 
 
 def main():
-    fire.Fire({"check": check_qa_pairs, "generate": generate_qa_pairs, "draw": draw_detections})
+    fire.Fire({"check": check_qa_pairs, "generate": generate_qa_pairs, "generate_all": generate_all})
 
 
 if __name__ == "__main__":
