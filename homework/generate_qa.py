@@ -259,10 +259,16 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
 
     qa_pairs = []
     karts_info = extract_kart_objects(info_path,view_index,img_width,img_height)
+    track = extract_track_info(info_path)
     if not karts_info:
+        qa_pairs.append({
+        "question" : "What track is this?",
+        "answer" : track,
+        "image_file" : image_file
+        })
         return qa_pairs #empty if no karts in image
 
-    track = extract_track_info(info_path)
+
     #find center kart
     ego_kart = next((kart for kart in karts_info if kart["is_center_kart"]), None)
     # 1. Ego car question
@@ -368,7 +374,7 @@ def generate_all(info_path:str,output_json:str, img_width: int=150,img_height: i
         #    break
         all_qa_pairs = []
         for view in range(10):
-            qa_pair = generate_qa_pairs(filepath,view)
+            qa_pair = generate_qa_pairs(filepath,view, img_width, img_height)
             if qa_pair:
                 all_qa_pairs.extend(qa_pair)
 
