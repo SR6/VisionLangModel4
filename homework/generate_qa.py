@@ -53,6 +53,24 @@ def extract_frame_info(image_path: str) -> tuple[int, int]:
         return frame_id, view_index
     return 0, 0  # Default values if parsing fails
 
+def extract_field_id(filepath: str) -> str:
+    """
+    Extract field ID from *_info.json filename.
+
+    Args:
+        filepath: Path to the *_info.json file
+
+    Returns:
+        string of field_id
+    """
+    filename = Path(filepath).name
+    # Format is typically: XXXXX_info.json where XXXXX is frame_id
+    parts = filename.split("_")
+    if len(parts) >= 2:
+        frame_id = parts[0]  # String of field id
+
+        return frame_id
+    return '00000'  # Default values if parsing fails
 
 def draw_detections(
         image_path: str, info_path: str, font_scale: float = 0.5, thickness: int = 1, min_box_size: int = 5
@@ -341,21 +359,24 @@ def generate_all(info_path:str,output_json:str, img_width: int=150,img_height: i
     """
     import glob
     import os
-    all_qa_pairs = []
+    #all_qa_pairs = []
     #count = 0
     for filepath in glob.glob(os.path.join(info_path, '*info.json')):
-        #filepath is a single json file in directory provided
+        #filepath is a json file per field id in directory provided
         #count += 1 #temp to restrict running the entire thing
         #if count > 10:
         #    break
+        all_qa_pairs = []
         for view in range(10):
             qa_pair = generate_qa_pairs(filepath,view)
             if qa_pair:
                 all_qa_pairs.extend(qa_pair)
 
-    # save to json file
-    with open(output_json, "w") as f:
-        json.dump(all_qa_pairs, f, indent=2)
+        # save to json file
+        field_id = extract_field_id(filepath)
+        output_filename = info_path + field_id + output_json
+        with open(output_filename, "w") as f:
+            json.dump(all_qa_pairs, f, indent=2)
 
 def check_qa_pairs(info_file: str, view_index: int):
     """

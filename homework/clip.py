@@ -223,7 +223,7 @@ def train(
 ):
     vlm = BaseVLM()
 
-    output_dir = Path(output_dir)
+    output_dir = Path(__file__).parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize TensorBoard writer
@@ -267,7 +267,7 @@ def train(
         gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=True,
         learning_rate=learning_rate,
-        bf16=True,
+        bf16=True if device == "cuda" else False,
         logging_steps=1,
         save_strategy="steps",
         save_steps=50,

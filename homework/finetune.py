@@ -110,7 +110,7 @@ class VQADatasetForTraining(Dataset):
 def train(
     data_dir: Path | None = None,
     train_dataset_name: str = "train",
-    output_dir: str = "vlm_sft",
+    output_dir: str = "vlm_model", #vlm_sft but grader expects vlm_model
     num_train_epochs: int = 0.05,  # use only 0.05 epoch for training
     per_device_train_batch_size: int = 8,
     gradient_accumulation_steps: int = 4,
@@ -138,7 +138,7 @@ def train(
     vlm = BaseVLM()
 
     # Create output directory
-    output_dir = Path(output_dir)
+    output_dir = Path(__file__).parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize TensorBoard writer
@@ -185,7 +185,7 @@ def train(
         per_device_train_batch_size=per_device_train_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
-        bf16=True,
+        bf16=True if DEVICE == "cuda" else False,
         logging_steps=1,
         save_strategy="steps",
         save_steps=50,
