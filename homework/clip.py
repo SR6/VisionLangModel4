@@ -103,54 +103,45 @@ class CLIP(nn.Module):
         #figuring out feature dimensions of vision and text encoders (Used AI for this)
         dtype = next(vision_encoder.parameters()).dtype
         device = next(vision_encoder.parameters()).device
-        with torch.no_grad():
-            dummy_image = torch.randn(1,3,192,192, device=device, dtype=dtype)
-            vision_out = vision_encoder(dummy_image)
-            vision_feat = (
-                vision_out.last_hidden_state[:,0,:]
-                if hasattr(vision_out,"last_hidden_state")
-                else vision_out[0]
-                if isinstance(vision_out,(tuple,list))
-                else vision_out
-            )
-            vision_feat_dim = vision_feat.shape[-1]
+        # with torch.no_grad():
+        #     dummy_image = torch.randn(1,3,192,192, device=device, dtype=dtype)
+        #     vision_out = vision_encoder(dummy_image)
+        #     vision_feat = (
+        #         vision_out.last_hidden_state[:,0,:]
+        #         if hasattr(vision_out,"last_hidden_state")
+        #         else vision_out[0]
+        #         if isinstance(vision_out,(tuple,list))
+        #         else vision_out
+        #     )
+        #     vision_feat_dim = vision_feat.shape[-1]
 
-        with torch.no_grad():
-            dummy_text = torch.randint(0,1000,(1,16), device=device)
-            #dummy_text = dummy_text.to(dtype=torch.long)
-            text_out = text_encoder(input_ids=dummy_text, attention_mask=torch.ones_like(dummy_text))
-            text_feat = (
-                text_out.last_hidden_state[:,0,:]
-                if hasattr(text_out,"last_hidden_state")
-                else text_out[0]
-                if isinstance(text_out, (tuple, list))
-                else text_out
-            )
-            text_feat_dim = text_feat.shape[-1]
-        self.vision_proj = nn.Linear(vision_feat_dim, proj_dim)
-        self.text_proj = nn.Linear(text_feat_dim, proj_dim)
-        self.logit_scale = nn.Parameter(torch.log(torch.tensor(1/temperature)))
+        # with torch.no_grad():
+        #     dummy_text = torch.randint(0,1000,(1,16), device=device)
+        #     #dummy_text = dummy_text.to(dtype=torch.long)
+        #     text_out = text_encoder(input_ids=dummy_text, attention_mask=torch.ones_like(dummy_text))
+        #     text_feat = (
+        #         text_out.last_hidden_state[:,0,:]
+        #         if hasattr(text_out,"last_hidden_state")
+        #         else text_out[0]
+        #         if isinstance(text_out, (tuple, list))
+        #         else text_out
+        #     )
+        #     text_feat_dim = text_feat.shape[-1]
+        self.vision_proj = nn.Linear(vision_encoder.config.hidden_size, proj_dim)#nn.Linear(vision_feat_dim, proj_dim)
+        self.text_proj = nn.Linear(text_encoder.config.hidden_size, proj_dim)#nn.Linear(text_feat_dim, proj_dim)
+        self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1/temperature)))
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
         vision_out = self.vision_encoder(image)
-        vision_feat = (
-            vision_out.last_hidden_state[:,0,:]
-            if hasattr(vision_out,"last_hidden_state")
-            else vision_out[0]
-            if isinstance(vision_out, (tuple, list))
-            else vision_out
-        )
+        vision_feat = vision_out.last_hidden_state.mean(dim=1)
         return torch.nn.functional.normalize(self.vision_proj(vision_feat), dim=-1)
 
     def encode_text(self, text: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
         text_out = self.text_encoder(input_ids=text,attention_mask=attention_mask)
-        text_feat = (
-            text_out.last_hidden_state[:,0,:]
-            if hasattr(text_out, "last_hidden_state")
-            else text_out[0]
-            if isinstance(text_out, (tuple, list))
-            else text_out
-        )
+        mask = attention_mask.unsqueeze(-1).to(text_out.last_hidden_state.dtype)
+        masked_hidden = text_out.last_hidden_state * mask
+        text_feat = masked_hidden.sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
+
         return torch.nn.functional.normalize(self.text_proj(text_feat), dim=-1)
 
     def save_pretrained(self, save_directory: str, **kwargs):
@@ -223,15 +214,14 @@ class CLIP(nn.Module):
         Returns:
             tuple of logits_per_image, logits_per_text, logit_scale,
         """
-        #encode image
+        #encode, project, and normalize image
         image_embeds = self.encode_image(pixel_values)
-
-        #encode text
+        #encode , project, and normalize text
         text_embeds = self.encode_text(input_ids, attention_mask)
 
         #cosine similarity
         logit_scale = self.logit_scale.exp()
-        logits_per_image = torch.matmul(image_embeds, text_embeds.t()) * logit_scale
+        logits_per_image = logit_scale * image_embeds @ text_embeds.t() #torch.matmul(image_embeds, text_embeds.t()) * logit_scale
         logits_per_text = logits_per_image#.t()
         return logits_per_image, logits_per_text, logit_scale
 
