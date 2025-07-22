@@ -16,7 +16,7 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
     info_pth = Path(info_path)
     base_name = info_pth.stem.replace("_info", "")
     image_file = f"{base_name}_{view_index:02d}_im.jpg"
-    relative_dir = info_pth.parent.relative_to("data")
+    relative_dir = info_pth.parent.relative_to("data") #probably don't need this if using ../data
     image_file = str(os.path.join(relative_dir,image_file))
 
     caption_pairs = []
@@ -90,13 +90,13 @@ def generate_all_captions(info_path:str, output_json:str, img_width:int = 150, i
     import glob
     import os, json
     # count = 0
-    all_captions = []
+    #all_captions = [] #comment out after valid test against golden
     for filepath in glob.glob(os.path.join(info_path, '*info.json')):
         # filepath is a json file per field id in directory provided
         # count += 1 #temp to restrict running the entire thing
         # if count > 10:
         #    break
-        #all_captions = []
+        all_captions = [] #uncomment out after valid test against golden
         for view in range(10):
             caption_pair = generate_caption(filepath, view, img_width, img_height)
             if caption_pair:
@@ -105,8 +105,8 @@ def generate_all_captions(info_path:str, output_json:str, img_width:int = 150, i
         # save to json file
         field_id = extract_field_id(filepath)
         output_filename = info_path + field_id + output_json
-
-        with open(output_filename, "w") as f:
+        #output_filename = info_path + output_json #comment out after valid test against golden
+        with open(output_filename, "w") as f:   #indent this in after valid test against golden
             json.dump(all_captions, f, indent=2)
 
 def check_caption(info_file: str, view_index: int):

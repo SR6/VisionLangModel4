@@ -99,14 +99,59 @@ class CLIP(nn.Module):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.text_encoder = text_encoder
-        # TODO: implement the rest components
-        raise NotImplementedError("Not implemented")
+
+        #figuring out feature dimensions of vision and text encoders (Used AI for this)
+        dtype = next(vision_encoder.parameters()).dtype
+        device = next(vision_encoder.parameters()).device
+        with torch.no_grad():
+            dummy_image = torch.randn(1,3,192,192, device=device, dtype=dtype)
+            vision_out = vision_encoder(dummy_image)
+            vision_feat = (
+                vision_out.last_hidden_state[:,0,:]
+                if hasattr(vision_out,"last_hidden_state")
+                else vision_out[0]
+                if isinstance(vision_out,(tuple,list))
+                else vision_out
+            )
+            vision_feat_dim = vision_feat.shape[-1]
+
+        with torch.no_grad():
+            dummy_text = torch.randint(0,1000,(1,16), device=device)
+            #dummy_text = dummy_text.to(dtype=torch.long)
+            text_out = text_encoder(input_ids=dummy_text, attention_mask=torch.ones_like(dummy_text))
+            text_feat = (
+                text_out.last_hidden_state[:,0,:]
+                if hasattr(text_out,"last_hidden_state")
+                else text_out[0]
+                if isinstance(text_out, (tuple, list))
+                else text_out
+            )
+            text_feat_dim = text_feat.shape[-1]
+        self.vision_proj = nn.Linear(vision_feat_dim, proj_dim)
+        self.text_proj = nn.Linear(text_feat_dim, proj_dim)
+        self.logit_scale = nn.Parameter(torch.log(torch.tensor(1/temperature)))
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
-        return self.vision_encoder(image)
+        vision_out = self.vision_encoder(image)
+        vision_feat = (
+            vision_out.last_hidden_state[:,0,:]
+            if hasattr(vision_out,"last_hidden_state")
+            else vision_out[0]
+            if isinstance(vision_out, (tuple, list))
+            else vision_out
+        )
+        return torch.nn.functional.normalize(self.vision_proj(vision_feat), dim=-1)
 
-    def encode_text(self, text: str) -> torch.Tensor:
-        return self.text_encoder(text)
+    def encode_text(self, text: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+        text_out = self.text_encoder(input_ids=text,attention_mask=attention_mask)
+        text_feat = (
+            text_out.last_hidden_state[:,0,:]
+            if hasattr(text_out, "last_hidden_state")
+            else text_out[0]
+            if isinstance(text_out, (tuple, list))
+            else text_out
+        )
+        return torch.nn.functional.normalize(self.text_proj(text_feat), dim=-1)
 
     def save_pretrained(self, save_directory: str, **kwargs):
         """Customize save method, save additional parameters"""
@@ -176,10 +221,19 @@ class CLIP(nn.Module):
             (NOTE: you don't need to use the variable `labels`, this is just for compatibility with the Trainer class)
             (Hint: refer to returned values of the __getitem__ method in the CaptionDatasetForTraining class)
         Returns:
-            TODO: think about the what values should be returned
+            tuple of logits_per_image, logits_per_text, logit_scale,
         """
-        raise NotImplementedError("Not implemented")
+        #encode image
+        image_embeds = self.encode_image(pixel_values)
 
+        #encode text
+        text_embeds = self.encode_text(input_ids, attention_mask)
+
+        #cosine similarity
+        logit_scale = self.logit_scale.exp()
+        logits_per_image = torch.matmul(image_embeds, text_embeds.t()) * logit_scale
+        logits_per_text = logits_per_image#.t()
+        return logits_per_image, logits_per_text, logit_scale
 
 def compute_clip_loss(
     outputs: dict[str, Any], labels: torch.Tensor, num_items_in_batch: int | None = None
@@ -195,8 +249,14 @@ def compute_clip_loss(
     Returns:
         The loss for the CLIP model.
     """
-    raise NotImplementedError("Not implemented")
-
+    logits_per_image = outputs[0]
+    logits_per_text = outputs[1]
+    batch_size = logits_per_image.size(0)
+    labels = torch.arange(batch_size, device=logits_per_image.device)
+    loss_i = torch.nn.functional.cross_entropy(logits_per_image, labels)
+    loss_t = torch.nn.functional.cross_entropy(logits_per_text, labels)
+    loss = (loss_i + loss_t) / 2
+    return loss
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:
     target_modules = []
@@ -214,7 +274,7 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
 
 def train(
     data_dir: Path | None = None,
-    output_dir: str = "clip",
+    output_dir: str = "clip_model",
     num_train_epochs: float = 1,
     per_device_train_batch_size: int = 1024,
     gradient_accumulation_steps: int = 1,
@@ -297,7 +357,7 @@ def train(
 
 def demo_train():
     train(
-        train_dataset_name="train_demo",
+        data_dir=Path("train_demo"),
         output_dir="demo_clip",
         num_train_epochs=1,
         per_device_train_batch_size=2,
@@ -350,7 +410,7 @@ def test(ckpt_path: str, val_dataset: str = "valid_grader"):
 def main():
     from fire import Fire
 
-    Fire({"train": train, "test": test})
+    Fire({"train": train, "test": test, "demo_train" : demo_train})
 
 
 if __name__ == "__main__":
