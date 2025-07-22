@@ -221,9 +221,9 @@ class CLIP(nn.Module):
 
         #cosine similarity
         logit_scale = self.logit_scale.exp()
-        logits_per_image = logit_scale * image_embeds @ text_embeds.t() #torch.matmul(image_embeds, text_embeds.t()) * logit_scale
-        logits_per_text = logits_per_image#.t()
-        return logits_per_image, logits_per_text, logit_scale
+        #logits_per_image = logit_scale * image_embeds @ text_embeds.t() #torch.matmul(image_embeds, text_embeds.t()) * logit_scale
+        #logits_per_text = logits_per_image#.t()
+        return image_embeds, text_embeds, logit_scale #logits_per_image, logits_per_text, logit_scale
 
 def compute_clip_loss(
     outputs: dict[str, Any], labels: torch.Tensor, num_items_in_batch: int | None = None
