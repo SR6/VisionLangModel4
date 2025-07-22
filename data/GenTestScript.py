@@ -12,7 +12,7 @@ def main():
     print(f"Number of qa_pairs golden: {len(qa_b)}")
     print(f"Number of qa_pairs generated: {len(qa_g)}")
 
-    #chedk that every pair from golden is in generated
+    #check that every pair from golden is in generated
     count = 0
     correct = 0
     for idx, qa in enumerate(qa_b):
